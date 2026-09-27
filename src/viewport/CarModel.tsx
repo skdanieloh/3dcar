@@ -1,10 +1,11 @@
 import { useEffect, useMemo } from "react";
 import * as THREE from "three";
-import { buildCar } from "../domain/buildBody";
+import { buildCar, fasciaSpec } from "../domain/buildBody";
 import type { CarLayout } from "../domain/buildBody";
 import { lerp, planPull, sampleStation } from "../domain/sample";
 import type { Station } from "../domain/sample";
 import type { Vehicle } from "../domain/types";
+import { Interior } from "./Interior";
 import { glassArgs, paintArgs } from "./materials";
 
 type Props = { vehicle: Vehicle };
@@ -13,12 +14,21 @@ export function CarModel({ vehicle }: Props) {
   const { design, performance, engine } = vehicle;
   const built = useMemo(
     () => buildCar(vehicle),
-    [design.bodyType, design.angularity, design.rimInches, design.tireWidthMm, design.tireAspect],
+    [
+      design.bodyType,
+      design.angularity,
+      design.rimInches,
+      design.tireWidthMm,
+      design.tireAspect,
+      design.grilleShape,
+      design.lightShape,
+    ],
   );
   useEffect(() => {
     return () => {
       built.paint.dispose();
       built.glass.dispose();
+      built.frame.dispose();
     };
   }, [built]);
 
@@ -50,9 +60,7 @@ export function CarModel({ vehicle }: Props) {
   const lamp = place(0.962, 0.56);
   const tail = place(0.02, 0.58);
   const nose = place(0.992, 0);
-  const grilleY = lerp(nose.station.lower, nose.station.center, body.type === "suv" ? 0.52 : 0.46);
-  const grilleW = Math.min(1.35, nose.station.halfW * (design.grilleShape === "shield" ? 1.55 : 1.28));
-  const grilleH = Math.max(0.16, (nose.station.center - nose.station.lower) * (design.grilleShape === "shield" ? 0.5 : 0.38));
+  const fascia = fasciaSpec(design, nose.station);
   const mirror = place(body.cowlU - 0.03, 1);
   const hp = performance.horsepower;
   const vents = hp >= 430 && engine.aspiration !== "electric";
@@ -74,12 +82,21 @@ export function CarModel({ vehicle }: Props) {
       <mesh geometry={built.paint} castShadow>
         <meshPhysicalMaterial {...paint} />
       </mesh>
-      <Structure body={body} tire={tire} angularity={angularity} />
       {built.glass.getIndex() && built.glass.getIndex()!.count > 0 && (
         <mesh geometry={built.glass}>
-          <meshPhysicalMaterial {...glass} side={THREE.DoubleSide} />
+          <meshPhysicalMaterial
+            color={glass.color}
+            roughness={0.06}
+            metalness={0}
+            transparent
+            opacity={0.22 + design.tint * 0.48}
+            side={THREE.DoubleSide}
+            depthWrite={false}
+            envMapIntensity={1.1}
+          />
         </mesh>
       )}
+      <Interior body={body} />
 
       {[1, -1].map((side) => (
         <group key={side}>
@@ -99,7 +116,7 @@ export function CarModel({ vehicle }: Props) {
           />
           <Headlamp
             shape={design.lightShape}
-            position={[lamp.x, lerp(lamp.station.lower, lamp.station.shoulder, 0.62), side * lamp.z]}
+            position={[lamp.x - fascia.lampDepth * 0.25, fascia.lampY, side * fascia.lampZ]}
             side={side as 1 | -1}
           />
           <TailLamp
@@ -123,9 +140,9 @@ export function CarModel({ vehicle }: Props) {
       <Grille
         shape={design.grilleShape}
         color={design.color}
-        position={[nose.x + 0.01, grilleY, 0]}
-        width={grilleW}
-        height={grilleH}
+        position={[nose.x - fascia.grilleDepth * 0.35, fascia.grilleY, 0]}
+        width={fascia.grilleW}
+        height={fascia.grilleH}
       />
 
       {exhausts.map((z, index) => (
@@ -137,7 +154,6 @@ export function CarModel({ vehicle }: Props) {
       {wing && <Wing place={place} />}
       {lip && <Lip place={place} color={design.color} finish={design.finish} />}
       {hatchSpoiler && <HatchSpoiler place={place} color={design.color} finish={design.finish} />}
-      {body.type === "suv" && <RoofRails roof={roof} bodyLength={body.length} roofRearU={body.roofRearU} roofFrontU={body.roofFrontU} />}
       {body.type === "suv" && skirtSpan > 0.3 &&
         [-1, 1].map((side) => (
           <mesh key={side} position={[skirtMid, 0.34, side * (body.width * 0.46)]}>
@@ -154,7 +170,7 @@ export function CarModel({ vehicle }: Props) {
         ))}
       {body.type === "sports" && (
         <mesh position={[layout.noseX - 0.05, 0.18, 0]}>
-          <boxGeometry args={[0.12, 0.03, grilleW * 0.92]} />
+          <boxGeometry args={[0.12, 0.03, fascia.grilleW * 0.92]} />
           <meshStandardMaterial color="#0e0f12" roughness={0.45} metalness={0.5} />
         </mesh>
       )}
@@ -177,67 +193,6 @@ export function CarModel({ vehicle }: Props) {
         <FuelFlap place={place} u={body.rearAxleU - 0.04} />
       )}
     </group>
-  );
-}
-
-function Structure({
-  body,
-  tire,
-  angularity,
-}: {
-  body: CarLayout["body"];
-  tire: CarLayout["tire"];
-  angularity: number;
-}) {
-  const stationAt = (u: number) => sampleStation(body, u, angularity, tire);
-  const buried = (u: number, side: number, along = 0.42) => {
-    const station = stationAt(u);
-    const rise = Math.max(0.08, station.center - station.shoulder);
-    const y = station.shoulder + rise * along;
-    const z = side * station.halfW * Math.min(0.22, body.roofWidth * 0.4);
-    return [station.x, y, z];
-  };
-  const hasB = body.type !== "coupe" && body.type !== "sports";
-  const bU = (body.roofRearU + body.roofFrontU) / 2;
-  const members: Array<[number[], number[]]> = [];
-  for (const side of [1, -1]) {
-    members.push([buried(body.cowlU - 0.02, side, 0.16), buried(body.roofFrontU + 0.01, side, 0.62)]);
-    members.push([buried(body.rearGlassU + 0.03, side, 0.18), buried(body.roofRearU, side, 0.6)]);
-    if (hasB) members.push([buried(bU, side, 0.14), buried(bU, side, 0.58)]);
-    members.push([buried(body.roofRearU, side, 0.58), buried(body.roofFrontU, side, 0.58)]);
-  }
-  for (const u of [body.roofRearU, bU, body.roofFrontU]) {
-    const station = stationAt(u);
-    const rise = Math.max(0.08, station.center - station.shoulder);
-    const y = station.shoulder + rise * 0.55;
-    const z = station.halfW * Math.min(0.2, body.roofWidth * 0.36);
-    members.push([
-      [station.x, y, -z],
-      [station.x, y, z],
-    ]);
-  }
-  return (
-    <group>
-      {members.map(([from, to], index) => (
-        <Steel key={index} from={from} to={to} />
-      ))}
-    </group>
-  );
-}
-
-function Steel({ from, to }: { from: number[]; to: number[] }) {
-  const start = new THREE.Vector3(from[0], from[1], from[2]);
-  const end = new THREE.Vector3(to[0], to[1], to[2]);
-  const length = Math.max(0.05, start.distanceTo(end));
-  const mid = start.clone().lerp(end, 0.5);
-  const direction = end.clone().sub(start);
-  if (direction.lengthSq() < 1e-8) return null;
-  const quaternion = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.normalize());
-  return (
-    <mesh position={mid} quaternion={quaternion}>
-      <boxGeometry args={[0.028, length, 0.02]} />
-      <meshStandardMaterial color="#2c3036" metalness={0.7} roughness={0.38} />
-    </mesh>
   );
 }
 
@@ -680,30 +635,6 @@ function HatchSpoiler({
       <boxGeometry args={[0.1, 0.025, spot.station.halfW * 1.5]} />
       <meshPhysicalMaterial {...paintArgs(color, finish)} />
     </mesh>
-  );
-}
-
-function RoofRails({
-  roof,
-  bodyLength,
-  roofRearU,
-  roofFrontU,
-}: {
-  roof: Station;
-  bodyLength: number;
-  roofRearU: number;
-  roofFrontU: number;
-}) {
-  const length = (roofFrontU - roofRearU) * bodyLength * 0.8;
-  return (
-    <group>
-      {[-1, 1].map((side) => (
-        <mesh key={side} position={[roof.x, roof.center + 0.04, side * roof.halfW * 0.55]}>
-          <boxGeometry args={[length, 0.02, 0.025]} />
-          <meshStandardMaterial color="#1a1c20" metalness={0.7} roughness={0.35} />
-        </mesh>
-      ))}
-    </group>
   );
 }
 

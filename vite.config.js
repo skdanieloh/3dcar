@@ -4,4 +4,7 @@ import { defineConfig } from 'vite';
 export default defineConfig({
     base: "/3dcar/",
     plugins: [react()],
+    resolve: {
+        extensions: [".mjs", ".mts", ".tsx", ".ts", ".jsx", ".js", ".json"],
+    },
 });
