@@ -74,6 +74,7 @@ export function CarModel({ vehicle }: Props) {
       <mesh geometry={built.paint} castShadow>
         <meshPhysicalMaterial {...paint} />
       </mesh>
+      <Structure body={body} tire={tire} angularity={angularity} />
       {built.glass.getIndex() && built.glass.getIndex()!.count > 0 && (
         <mesh geometry={built.glass}>
           <meshPhysicalMaterial {...glass} side={THREE.DoubleSide} />
@@ -176,6 +177,67 @@ export function CarModel({ vehicle }: Props) {
         <FuelFlap place={place} u={body.rearAxleU - 0.04} />
       )}
     </group>
+  );
+}
+
+function Structure({
+  body,
+  tire,
+  angularity,
+}: {
+  body: CarLayout["body"];
+  tire: CarLayout["tire"];
+  angularity: number;
+}) {
+  const stationAt = (u: number) => sampleStation(body, u, angularity, tire);
+  const buried = (u: number, side: number, along = 0.42) => {
+    const station = stationAt(u);
+    const rise = Math.max(0.08, station.center - station.shoulder);
+    const y = station.shoulder + rise * along;
+    const z = side * station.halfW * Math.min(0.22, body.roofWidth * 0.4);
+    return [station.x, y, z];
+  };
+  const hasB = body.type !== "coupe" && body.type !== "sports";
+  const bU = (body.roofRearU + body.roofFrontU) / 2;
+  const members: Array<[number[], number[]]> = [];
+  for (const side of [1, -1]) {
+    members.push([buried(body.cowlU - 0.02, side, 0.16), buried(body.roofFrontU + 0.01, side, 0.62)]);
+    members.push([buried(body.rearGlassU + 0.03, side, 0.18), buried(body.roofRearU, side, 0.6)]);
+    if (hasB) members.push([buried(bU, side, 0.14), buried(bU, side, 0.58)]);
+    members.push([buried(body.roofRearU, side, 0.58), buried(body.roofFrontU, side, 0.58)]);
+  }
+  for (const u of [body.roofRearU, bU, body.roofFrontU]) {
+    const station = stationAt(u);
+    const rise = Math.max(0.08, station.center - station.shoulder);
+    const y = station.shoulder + rise * 0.55;
+    const z = station.halfW * Math.min(0.2, body.roofWidth * 0.36);
+    members.push([
+      [station.x, y, -z],
+      [station.x, y, z],
+    ]);
+  }
+  return (
+    <group>
+      {members.map(([from, to], index) => (
+        <Steel key={index} from={from} to={to} />
+      ))}
+    </group>
+  );
+}
+
+function Steel({ from, to }: { from: number[]; to: number[] }) {
+  const start = new THREE.Vector3(from[0], from[1], from[2]);
+  const end = new THREE.Vector3(to[0], to[1], to[2]);
+  const length = Math.max(0.05, start.distanceTo(end));
+  const mid = start.clone().lerp(end, 0.5);
+  const direction = end.clone().sub(start);
+  if (direction.lengthSq() < 1e-8) return null;
+  const quaternion = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.normalize());
+  return (
+    <mesh position={mid} quaternion={quaternion}>
+      <boxGeometry args={[0.028, length, 0.02]} />
+      <meshStandardMaterial color="#2c3036" metalness={0.7} roughness={0.38} />
+    </mesh>
   );
 }
 

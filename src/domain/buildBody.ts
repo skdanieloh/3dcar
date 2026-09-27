@@ -136,14 +136,15 @@ function section(station: Station, body: BodyDef, angularity: number, tire: Tire
   const rail = halfW * body.roofWidth;
   let upperRaw: Vec2[];
   if (greenhouse) {
-    const tuck = lerp(0.9, 0.96, slab) - body.tumble * 0.05;
+    const skin = halfW * lerp(0.94, 0.99, slab);
     upperRaw = [
       belt,
-      { y: shoulder + 0.018, z: halfW * tuck },
-      { y: lerp(shoulder, center, 0.42), z: Math.min(halfW * 0.9, rail + halfW * 0.16) },
-      { y: lerp(shoulder, center, 0.8), z: rail },
-      { y: center, z: rail * 0.22 },
-      { y: center + 0.003, z: 0 },
+      { y: shoulder + 0.02, z: skin },
+      { y: shoulder + 0.055, z: skin * (0.96 - body.tumble * 0.02) },
+      { y: lerp(shoulder, center, 0.62), z: Math.min(skin * 0.9, rail + 0.04) },
+      { y: lerp(shoulder, center, 0.9), z: rail },
+      { y: center, z: rail * 0.28 },
+      { y: center + 0.002, z: 0 },
     ];
   } else if (shoulder > center + 0.015) {
     upperRaw = [
@@ -161,7 +162,8 @@ function section(station: Station, body: BodyDef, angularity: number, tire: Tire
       { y: top + 0.003, z: 0 },
     ];
   }
-  const upper = resample(fillet(upperRaw, handle, 2), UPPER_STEPS);
+  const upperHandle = greenhouse ? Math.min(handle, 0.008) : handle;
+  const upper = resample(fillet(upperRaw, upperHandle, 2), UPPER_STEPS);
   upper[0] = { ...belt };
   upper[upper.length - 1] = { y: upper[upper.length - 1].y, z: 0 };
 
@@ -175,26 +177,22 @@ function section(station: Station, body: BodyDef, angularity: number, tire: Tire
 
 function markGlass(half: RingPt[], station: Station, body: BodyDef, rail: number) {
   const { u, shoulder, center, halfW } = station;
-  const side = u > body.roofRearU + 0.025 && u < body.roofFrontU - 0.02;
-  const windshield = u >= body.roofFrontU - 0.02 && u < body.cowlU - 0.01;
-  const backlight = u > body.rearGlassU + 0.012 && u <= body.roofRearU + 0.025;
+  const side = u > body.roofRearU + 0.03 && u < body.roofFrontU - 0.025;
+  const windshield = u >= body.roofFrontU - 0.02 && u < body.cowlU - 0.012;
+  const backlight = u > body.rearGlassU + 0.02 && u <= body.roofRearU + 0.02;
   for (const point of half) {
-    if (point.y < shoulder + 0.028) continue;
-    if (windshield) {
-      const pillar = Math.abs(point.z) > halfW * 0.8 && point.y < shoulder + 0.1;
-      point.glass = !pillar;
+    const aboveSill = point.y > shoulder + 0.06;
+    const belowRoof = point.y < center - 0.04;
+    const absZ = Math.abs(point.z);
+    if (windshield && point.y > shoulder + 0.09 && absZ < halfW * 0.55) {
+      point.glass = true;
       continue;
     }
-    if (backlight) {
-      const crown = point.y > center - 0.012 && Math.abs(point.z) < rail * 0.4;
-      point.glass = !crown;
+    if (backlight && aboveSill && belowRoof && absZ < halfW * 0.5) {
+      point.glass = true;
       continue;
     }
-    if (side) {
-      const belowRoof = point.y < center - 0.03;
-      const outboard = Math.abs(point.z) > Math.max(0.14, rail * 0.42);
-      point.glass = belowRoof && outboard;
-    }
+    if (side && aboveSill && belowRoof && absZ > rail * 0.62 && absZ < halfW * 0.9) point.glass = true;
   }
 }
 
@@ -267,8 +265,19 @@ export function buildCar(vehicle: Vehicle): BuiltCar {
   paint.computeVertexNormals();
   orientOutward(paint);
 
+  const glassPositions = positions.slice();
+  for (let vertex = 0; vertex < glassAt.length; vertex += 1) {
+    if (!glassAt[vertex]) continue;
+    const station = stations[Math.min(U_STEPS, Math.floor(vertex / row))];
+    const z = glassPositions[vertex * 3 + 2];
+    const side = Math.sign(z) || 1;
+    glassPositions[vertex * 3 + 2] = z - side * 0.018;
+    glassPositions[vertex * 3 + 1] -= 0.01;
+    if (station.u >= body.roofFrontU - 0.02 && station.u < body.cowlU) glassPositions[vertex * 3] -= 0.014;
+    if (station.u <= body.roofRearU + 0.025) glassPositions[vertex * 3] += 0.012;
+  }
   const glass = new THREE.BufferGeometry();
-  glass.setAttribute("position", new THREE.Float32BufferAttribute(positions.slice(), 3));
+  glass.setAttribute("position", new THREE.Float32BufferAttribute(glassPositions, 3));
   glass.setIndex(glassIndex);
   if (glassIndex.length > 0) {
     glass.computeVertexNormals();
